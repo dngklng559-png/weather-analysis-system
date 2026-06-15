@@ -76,7 +76,10 @@ class WeatherDataPreprocessor:
         """处理缺失值"""
         df_filled = df.copy()
         if method == "interpolate":
-            df_filled = df_filled.interpolate(method="time")
+            try:
+                df_filled = df_filled.interpolate(method="time")
+            except (ValueError, KeyError):
+                df_filled = df_filled.interpolate(method="linear")
         elif method == "mean":
             df_filled = df_filled.fillna(df_filled.mean())
         elif method == "drop":
@@ -602,35 +605,25 @@ def predict():
         return jsonify({"success": False, "error": "请先上传或预处理数据"}), 400
 
     target_field = body.get("target_field", "temperature")
-    seq_length = body.get("seq_length", 24)
-    epochs = body.get("epochs", 30)
+    seq_length = int(body.get("seq_length", 24))
+    epochs = int(body.get("epochs", 30))
+    forecast_steps = int(body.get("forecast_steps", 1))
+    model_type = body.get("model_type", "lstm")
 
-    #多气象指标联合输入（不少于3个）
+    # 多气象指标联合输入（不少于3个）
     feature_fields = body.get("feature_fields", ["temperature", "humidity", "wind_speed"])
     for f in feature_fields:
         if f not in df.columns:
             return jsonify({"success": False, "error": f"特征字段 '{f}' 不存在"}), 400
     if target_field not in feature_fields:
-        return jsonify({"success": False, "error": "目标字段必须在特征列表中"}), 400
-
-    data_multi = df[feature_fields].values.astype(np.float32)
-    target_col_idx = feature_fields.index(target_field)
-    #多步预测步长
-    forecast_steps = body.get("forecast_steps", 24)
-    #选择模型类型
-    model_type = body.get("model_type", "lstm")
-
-    if target_field not in df.columns:
-        return jsonify({"success": False, "error": f"目标字段 '{target_field}' 不存在"}), 400
+        feature_fields = [target_field] + [c for c in df.select_dtypes(include=[np.number]).columns.tolist() if c != target_field][:2]
 
     try:
-        target_series = df[target_field].values.reshape(-1, 1).astype(np.float32)
-        X, y = preprocessor.prepare_sequences(
-            data=data_multi,
-            seq_length=seq_length,
-            forecast_horizon=forecast_steps,
-            target_col_idx=target_col_idx
-        )
+        data_multi = df[feature_fields].values.astype(np.float32)
+        # 数据归一化（关键：加速训练收敛）
+        scaler = MinMaxScaler()
+        data_multi = scaler.fit_transform(data_multi)
+        target_col_idx = feature_fields.index(target_field)
 
         if len(X) < 10:
             return jsonify({"success": False, "error": "数据量不足以训练模型，至少需要更多数据"}), 400
@@ -656,16 +649,28 @@ def predict():
         )
 
         predictions = predictor.predict(X_test)
-        metrics = predictor.evaluate(y_test, predictions)
+        metrics = predictor.evaluate(y_test_raw, predictions_raw)
+
+        # 反归一化到原始尺度
+        t_idx = feature_fields.index(target_field)
+        y_test_raw = y_test.copy()
+        predictions_raw = predictions.copy()
+        if scaler is not None:
+            dummy_test = np.zeros((len(y_test), len(feature_fields)))
+            dummy_test[:, t_idx] = y_test[:, 0] if forecast_steps == 1 else y_test[:, 0]
+            y_test_raw = scaler.inverse_transform(dummy_test)[:, t_idx].reshape(-1, 1)
+            dummy_pred = np.zeros((len(predictions), len(feature_fields)))
+            dummy_pred[:, t_idx] = predictions[:, 0] if forecast_steps == 1 else predictions[:, 0]
+            predictions_raw = scaler.inverse_transform(dummy_pred)[:, t_idx].reshape(-1, 1)
 
         # 测试集对比
         comparison = []
-        for i in range(min(100, len(y_test))):
+        for i in range(min(100, len(y_test_raw))):
             comparison.append({
                 "index": i,
-                "actual": round(float(y_test[i][0]), 2),
-                "predicted": round(float(predictions[i][0]), 2),
-                "error": round(abs(float(y_test[i][0]) - float(predictions[i][0])), 2),
+                "actual": round(float(y_test_raw[i][0]), 2),
+                "predicted": round(float(predictions_raw[i][0]), 2),
+                "error": round(abs(float(y_test_raw[i][0]) - float(predictions_raw[i][0])), 2),
             })
 
         return jsonify({
@@ -744,4 +749,4 @@ if __name__ == "__main__":
     print("  运行地址: http://localhost:5000")
     print("  健康检查: http://localhost:5000/api/health")
     print("=" * 50)
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
