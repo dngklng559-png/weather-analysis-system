@@ -1,0 +1,6 @@
+{
+  "name": "Weather Data Visualization System",
+  "description": "气象数据可视化系统 - A comprehensive weather data visualization frontend including data overview, dynamic CSV analysis, model predictions, anomaly detection, and classification dashboards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
