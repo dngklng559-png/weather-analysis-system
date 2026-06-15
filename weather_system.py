@@ -626,6 +626,13 @@ def predict():
         data_multi = scaler.fit_transform(data_multi)
         target_col_idx = feature_fields.index(target_field)
 
+        X, y = preprocessor.prepare_sequences(
+            data=data_multi,
+            seq_length=seq_length,
+            forecast_horizon=forecast_steps,
+            target_col_idx=target_col_idx
+        )
+
         if len(X) < 10:
             return jsonify({"success": False, "error": "数据量不足以训练模型，至少需要更多数据"}), 400
 
@@ -650,19 +657,17 @@ def predict():
         )
 
         predictions = predictor.predict(X_test)
-        metrics = predictor.evaluate(y_test_raw, predictions_raw)
 
         # 反归一化到原始尺度
         t_idx = feature_fields.index(target_field)
-        y_test_raw = y_test.copy()
-        predictions_raw = predictions.copy()
-        if scaler is not None:
-            dummy_test = np.zeros((len(y_test), len(feature_fields)))
-            dummy_test[:, t_idx] = y_test[:, 0] if forecast_steps == 1 else y_test[:, 0]
-            y_test_raw = scaler.inverse_transform(dummy_test)[:, t_idx].reshape(-1, 1)
-            dummy_pred = np.zeros((len(predictions), len(feature_fields)))
-            dummy_pred[:, t_idx] = predictions[:, 0] if forecast_steps == 1 else predictions[:, 0]
-            predictions_raw = scaler.inverse_transform(dummy_pred)[:, t_idx].reshape(-1, 1)
+        dummy_test = np.zeros((len(y_test), len(feature_fields)))
+        dummy_test[:, t_idx] = y_test[:, 0] if forecast_steps == 1 else y_test[:, 0]
+        y_test_raw = scaler.inverse_transform(dummy_test)[:, t_idx].reshape(-1, 1)
+        dummy_pred = np.zeros((len(predictions), len(feature_fields)))
+        dummy_pred[:, t_idx] = predictions[:, 0] if forecast_steps == 1 else predictions[:, 0]
+        predictions_raw = scaler.inverse_transform(dummy_pred)[:, t_idx].reshape(-1, 1)
+
+        metrics = predictor.evaluate(y_test_raw, predictions_raw)
 
         # 测试集对比
         comparison = []
