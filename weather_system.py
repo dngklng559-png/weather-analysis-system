@@ -68,7 +68,10 @@ class WeatherDataPreprocessor:
             df_clean.set_index("timestamp", inplace=True)
         else:
             # 无时间列则创建小时级时间序列
-            df_clean["timestamp"] = pd.date_range(start="2020-01-01", periods=len(df_clean), freq="H")
+            try:
+                df_clean["timestamp"] = pd.date_range(start="2020-01-01", periods=len(df_clean), freq="h")
+            except (ValueError, KeyError):
+                df_clean["timestamp"] = pd.date_range(start="2020-01-01", periods=len(df_clean), freq="H")
             df_clean.set_index("timestamp", inplace=True)
         return df_clean
 
@@ -497,9 +500,7 @@ def preprocess():
     # 支持两种输入：直接传 JSON 数据 或 使用之前上传的文件
     if "data" in body:
         df = pd.DataFrame(body["data"])
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
-            df.set_index("timestamp", inplace=True)
+        # 不要在这里 set_index，让 clean_data 统一处理时间列
         _data_store["df"] = df
     elif _data_store["df"] is not None:
         df = _data_store["df"]
